@@ -1,22 +1,7 @@
 {
   "colecoes": [
-    {
-      "nome": "item-01",
-      "fundo": 3,
-      "traco": 5,
-      "eixos": [-80, 40, null, 60, -20, 100]
-    },
-    {
-      "nome": "item-02",
-      "fundo": 12,
-      "traco": 45,
-      "eixos": [20, -60, 80, -40, 50, -100]
-    },
-    {
-      "nome": "item-03",
-      "fundo": 25,
-      "traco": 150,
-      "eixos": [0, 0, 0, 0, 0, 0]
-    }
+    { "nome": "Imagens para interpretar", "fundo": 13, "traco": 126, "eixos": [38.0, 71.1, 66.7, 46.6, 84.6, 45.4] },
+    { "nome": "Teste 2", "fundo": 6, "traco": 63, "eixos": [42.7, 77.2, 32.5, 67.7, 75.7, 56.0] },
+    { "nome": "Teste 3", "fundo": 4, "traco": 33, "eixos": [12.8, 87.0, 17.5, 72.0, 34.0, 32.0] }
   ]
 }

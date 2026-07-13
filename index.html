@@ -102,9 +102,9 @@ const MARGEM_Y = 70;
 const RAIO_CIRCULO = 14;
 
 function mapValorParaX(valor) {
-  const bruto = (valor === null || valor === undefined) ? 0 : valor; // sem dado -> centro
-  const v = Math.max(-100, Math.min(100, bruto));
-  const t = (v + 100) / 200;
+  const bruto = (valor === null || valor === undefined) ? 50 : valor; // sem dado -> centro
+  const v = Math.max(0, Math.min(100, bruto));
+  const t = v / 100;
   return EIXO_X1 + t * (EIXO_X2 - EIXO_X1);
 }
 function calcularYDoEixo(index) {
@@ -136,7 +136,7 @@ function carregarImagem(src) {
 //   "nome": "opcional, aparece como legenda",
 //   "fundo": 7,                    // número -> ver faixas em mapaFundo()
 //   "traco": 45,                   // número -> ver faixas em mapaTraco()
-//   "eixos": [-80, 40, null, 60, -20, 100]   // 6 valores, -100..100 ou null
+//   "eixos": [20, 60, null, 90, 10, 100]      // 6 valores, 0..100 ou null
 // }
 // -----------------------------------------------------------------
 async function desenharComposicao(ctx, dados) {
