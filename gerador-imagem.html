@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gerador de imagem a partir de dados</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vue/3.4.21/vue.global.prod.min.js"></script>
+<style>
+  :root{
+    --bg: #14161a; --panel: #1d2026; --panel-2: #23262e; --line: #33373f;
+    --text: #e8e8ea; --muted: #9a9fa8; --accent: #7dd3c0; --danger: #ff6b6b;
+  }
+  *{ box-sizing: border-box; }
+  body{ margin:0; font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); }
+  #app{ max-width: 720px; margin: 0 auto; padding: 32px 20px 60px; }
+  h1{ font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sub{ color: var(--muted); font-size: 14px; margin: 0 0 24px; }
+  .panel{ background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 20px; }
+  input[type=file]{
+    width: 100%; background: var(--panel-2); color: var(--text); border: 1px dashed var(--line);
+    border-radius: 8px; padding: 20px 12px; font-size: 13px;
+  }
+  .stage{
+    width: 100%; aspect-ratio: 1 / 1; border-radius: 12px; overflow: hidden;
+    background: #0e0f12; border: 1px solid var(--line); display:flex; align-items:center; justify-content:center;
+  }
+  canvas{ width: 100%; height: 100%; display:block; }
+  .placeholder{ color: var(--muted); font-size: 13px; }
+  .actions{ display:flex; gap: 10px; margin-top: 14px; }
+  button{
+    background: var(--accent); color: #0e0f12; border: none; border-radius: 8px;
+    padding: 10px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled{ opacity: .4; cursor: not-allowed; }
+  .erro{ color: var(--danger); font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>Gerador de imagem a partir de arquivo de dados</h1>
+
+  <div class="panel">
+    <p class="sub" style="margin:0 0 12px;">Carregando automaticamente: <code>dados-colecoes.json</code></p>
+    <button @click="carregar">Recarregar dados</button>
+    <p v-if="erro" class="erro">{{ erro }}</p>
+  </div>
+
+  <div class="panel">
+    <div class="stage">
+      <canvas ref="canvasEl" width="600" height="600" v-show="dados"></canvas>
+      <span class="placeholder" v-if="!dados">nenhum arquivo carregado ainda</span>
+    </div>
+    <div class="actions">
+      <button :disabled="!dados" @click="baixarPNG">Baixar imagem (PNG)</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, nextTick } = Vue;
+
+// -----------------------------------------------------------------
+// REGRAS DE FAIXA: o número do JSON cai dentro de um intervalo, que
+// aponta pro arquivo correspondente em assets/.
+//
+// fundo:
+//   1  a 5   -> assets/fundo-verde.png
+//   5  a 10  -> assets/fundo-azul.png
+//   10 a 20  -> assets/fundo-laranja.png
+//   acima de 20 -> assets/fundo-rosa.png
+// (nos limites 5, 10 e 20, entra na primeira faixa que bate, ou seja
+//  o próprio 5 cai em "verde", o próprio 10 em "azul", o 20 em "laranja")
+//
+// traco:
+//   até 9      -> assets/linhas-anos.png
+//   10 a 99    -> assets/linhas-decadas.png
+//   acima de 100 (>= 100) -> assets/linhas-seculos.png
+// -----------------------------------------------------------------
+
+function mapaFundo(numero) {
+  if (numero <= 5) return 'assets/fundo-verde.png';
+  if (numero <= 10) return 'assets/fundo-azul.png';
+  if (numero <= 20) return 'assets/fundo-laranja.png';
+  return 'assets/fundo-rosa.png';
+}
+
+function mapaTraco(numero) {
+  if (numero <= 9) return 'assets/linhas-anos.png';
+  if (numero <= 99) return 'assets/linhas-decadas.png';
+  return 'assets/linhas-seculos.png';
+}
+
+const OVERLAY_BLEND = 'multiply';
+const PROCEDURAL_BLEND = 'multiply';
+
+// 3) camada gerada: 6 eixos horizontais (invisíveis), só os círculos aparecem
+const NUM_EIXOS = 6;
+const EIXO_X1 = 100;
+const EIXO_X2 = 500;
+const MARGEM_Y = 70;
+const RAIO_CIRCULO = 14;
+
+function mapValorParaX(valor) {
+  const bruto = (valor === null || valor === undefined) ? 0 : valor; // sem dado -> centro
+  const v = Math.max(-100, Math.min(100, bruto));
+  const t = (v + 100) / 200;
+  return EIXO_X1 + t * (EIXO_X2 - EIXO_X1);
+}
+function calcularYDoEixo(index) {
+  const alturaUtil = 600 - MARGEM_Y * 2;
+  const passo = alturaUtil / (NUM_EIXOS - 1);
+  return MARGEM_Y + passo * index;
+}
+
+// carrega uma imagem (src pode ser data-uri ou caminho de arquivo) como Promise
+function carregarImagem(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+// -----------------------------------------------------------------
+// FUNÇÃO PRINCIPAL: recebe os dados já parseados do JSON e desenha
+// a composição final no canvas.
+//
+// Formato esperado do arquivo de dados:
+// {
+//   "fundo": 7,                    // número -> ver faixas em mapaFundo()
+//   "traco": 45,                   // número -> ver faixas em mapaTraco()
+//   "eixos": [-80, 40, null, 60, -20, 100]   // 6 valores, -100..100 ou null
+// }
+// -----------------------------------------------------------------
+async function desenharComposicao(ctx, dados) {
+  ctx.clearRect(0, 0, 600, 600);
+  ctx.globalCompositeOperation = 'source-over';
+
+  if (typeof dados.fundo !== 'number') throw new Error(`"fundo" precisa ser um número (recebido: ${JSON.stringify(dados.fundo)})`);
+  if (typeof dados.traco !== 'number') throw new Error(`"traco" precisa ser um número (recebido: ${JSON.stringify(dados.traco)})`);
+  if (!Array.isArray(dados.eixos) || dados.eixos.length !== NUM_EIXOS) {
+    throw new Error(`"eixos" precisa ser um array com ${NUM_EIXOS} valores`);
+  }
+
+  // camada 1: fundo
+  const imgFundo = await carregarImagem(mapaFundo(dados.fundo));
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(imgFundo, 0, 0, 600, 600);
+
+  // camada 2: traço fixo
+  const imgTraco = await carregarImagem(mapaTraco(dados.traco));
+  ctx.globalCompositeOperation = OVERLAY_BLEND;
+  ctx.drawImage(imgTraco, 0, 0, 600, 600);
+
+  // camada 3: círculos posicionados por eixo
+  ctx.globalCompositeOperation = PROCEDURAL_BLEND;
+  ctx.fillStyle = 'black';
+  dados.eixos.forEach((valor, index) => {
+    const cx = mapValorParaX(valor);
+    const cy = calcularYDoEixo(index);
+    ctx.beginPath();
+    ctx.arc(cx, cy, RAIO_CIRCULO, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+const app = createApp({
+  setup() {
+    const dados = ref(null);
+    const erro = ref('');
+    const canvasEl = ref(null);
+
+    async function carregar() {
+      erro.value = '';
+      try {
+        // arquivo esperado na raiz do projeto, mesmo nível deste .html
+        const resposta = await fetch('dados-colecoes.json', { cache: 'no-store' });
+        if (!resposta.ok) throw new Error(`não foi possível ler dados-colecoes.json (HTTP ${resposta.status})`);
+        const json = await resposta.json();
+        dados.value = json;
+
+        await nextTick(); // garante que o <canvas> já está no DOM (v-show)
+        const ctx = canvasEl.value.getContext('2d');
+        await desenharComposicao(ctx, json);
+      } catch (e) {
+        erro.value = 'Erro ao carregar dados-colecoes.json: ' + e.message;
+        dados.value = null;
+      }
+    }
+
+    function baixarPNG() {
+      if (!canvasEl.value) return;
+      const link = document.createElement('a');
+      link.download = 'imagem-gerada.png';
+      link.href = canvasEl.value.toDataURL('image/png');
+      link.click();
+    }
+
+    carregar(); // carrega assim que a página abre
+
+    return { dados, erro, canvasEl, carregar, baixarPNG };
+  }
+});
+
+app.mount('#app');
+</script>
+</body>
+</html>
