@@ -55,7 +55,7 @@
 <body>
 <div id="app">
   <h1>Grid de imagens geradas a partir de dados</h1>
-  <p class="sub">Cada imagem (220×220) corresponde a um grupo de dados em <code>dados-colecoes.json</code>. Grid de 6 colunas, 1 imagem por coluna.</p>
+  <p class="sub">Cada imagem (220×220) corresponde a um grupo de dados em <code>colecoes.json</code>. Grid de 6 colunas, 1 imagem por coluna.</p>
 
   <div class="toolbar">
     <button @click="carregar">Recarregar dados</button>
@@ -76,19 +76,29 @@
 const { createApp, ref, reactive, nextTick } = Vue;
 
 // -----------------------------------------------------------------
-// REGRAS DE FAIXA: o número do JSON cai dentro de um intervalo, que
-// aponta pro arquivo correspondente em assets/.
+// REGRAS DE FAIXA: os números do JSON caem dentro de intervalos, que
+// apontam pro arquivo correspondente em assets/.
 // -----------------------------------------------------------------
-function mapaFundo(numero) {
-  if (numero <= 5) return 'assets/fundo-verde.png';
-  if (numero <= 10) return 'assets/fundo-azul.png';
-  if (numero <= 20) return 'assets/fundo-laranja.png';
+function mapaFundo(imagens) {
+  if (imagens <= 5) return 'assets/fundo-verde.png';
+  if (imagens <= 10) return 'assets/fundo-azul.png';
+  if (imagens <= 20) return 'assets/fundo-laranja.png';
   return 'assets/fundo-rosa.png';
 }
-function mapaTraco(numero) {
-  if (numero <= 9) return 'assets/linhas-anos.png';
-  if (numero <= 99) return 'assets/linhas-decadas.png';
-  return 'assets/linhas-seculos.png';
+
+// camada-linha: combina a faixa de "periodo" com a relação "tags" / "imagens"
+function mapaCamadaLinha(periodo, tags, imagens) {
+  let sufixoPeriodo;
+  if (periodo <= 9) sufixoPeriodo = '-anos';
+  else if (periodo <= 99) sufixoPeriodo = '-decadas';
+  else sufixoPeriodo = '-seculos'; // acima de 100
+
+  let sufixoRelacao;
+  if (tags < imagens) sufixoRelacao = '-baixa.png';         // tags:imagens < 1/1
+  else if (tags === imagens) sufixoRelacao = '-media.png';  // tags:imagens = 1/1
+  else sufixoRelacao = '-alta.png';                          // tags:imagens > 1/1
+
+  return `assets/linhas${sufixoPeriodo}${sufixoRelacao}`;
 }
 
 const OVERLAY_BLEND = 'multiply';
@@ -131,35 +141,41 @@ function carregarImagem(src) {
 // -----------------------------------------------------------------
 // Desenha UM item (um grupo de dados) num canvas específico.
 //
-// Formato esperado de cada item:
+// Formato esperado de cada item (vindo de colecoes.json):
 // {
 //   "nome": "opcional, aparece como legenda",
-//   "fundo": 7,                    // número -> ver faixas em mapaFundo()
-//   "traco": 45,                   // número -> ver faixas em mapaTraco()
-//   "eixos": [20, 60, null, 90, 10, 100]      // 6 valores, 0..100 ou null
+//   "imagens": 7,                                   // número -> ver faixas em mapaFundo()
+//   "periodo": 45,                                  // número -> parte da camada-linha (mapaCamadaLinha())
+//   "tags": 12,                                     // número -> combinado com "imagens" define a outra parte da camada-linha
+//   "interpretacoes": [20, 60, null, 90, 10, 100]   // 6 valores, 0..100 ou null -> camada-pontos
 // }
 // -----------------------------------------------------------------
 async function desenharComposicao(ctx, dados) {
   ctx.clearRect(0, 0, 600, 600);
   ctx.globalCompositeOperation = 'source-over';
 
-  if (typeof dados.fundo !== 'number') throw new Error(`"fundo" precisa ser um número (recebido: ${JSON.stringify(dados.fundo)})`);
-  if (typeof dados.traco !== 'number') throw new Error(`"traco" precisa ser um número (recebido: ${JSON.stringify(dados.traco)})`);
-  if (!Array.isArray(dados.eixos) || dados.eixos.length !== NUM_EIXOS) {
-    throw new Error(`"eixos" precisa ser um array com ${NUM_EIXOS} valores`);
+  if (typeof dados.imagens !== 'number') throw new Error(`"imagens" precisa ser um número (recebido: ${JSON.stringify(dados.imagens)})`);
+  if (typeof dados.periodo !== 'number') throw new Error(`"periodo" precisa ser um número (recebido: ${JSON.stringify(dados.periodo)})`);
+  if (typeof dados.tags !== 'number') throw new Error(`"tags" precisa ser um número (recebido: ${JSON.stringify(dados.tags)})`);
+  const interpretacoes = dados.interpretacoes ?? dados['interpretações'];
+  if (!Array.isArray(interpretacoes) || interpretacoes.length !== NUM_EIXOS) {
+    throw new Error(`"interpretacoes" precisa ser um array com ${NUM_EIXOS} valores`);
   }
 
-  const imgFundo = await carregarImagem(mapaFundo(dados.fundo));
+  // camada de fundo
+  const imgFundo = await carregarImagem(mapaFundo(dados.imagens));
   ctx.globalCompositeOperation = 'source-over';
   ctx.drawImage(imgFundo, 0, 0, 600, 600);
 
-  const imgTraco = await carregarImagem(mapaTraco(dados.traco));
+  // camada-linha
+  const imgCamadaLinha = await carregarImagem(mapaCamadaLinha(dados.periodo, dados.tags, dados.imagens));
   ctx.globalCompositeOperation = OVERLAY_BLEND;
-  ctx.drawImage(imgTraco, 0, 0, 600, 600);
+  ctx.drawImage(imgCamadaLinha, 0, 0, 600, 600);
 
+  // camada-pontos
   ctx.globalCompositeOperation = PROCEDURAL_BLEND;
   ctx.fillStyle = 'black';
-  dados.eixos.forEach((valor, index) => {
+  interpretacoes.forEach((valor, index) => {
     const cx = mapValorParaX(valor);
     const cy = calcularYDoEixo(index);
     ctx.beginPath();
@@ -173,11 +189,11 @@ async function desenharComposicao(ctx, dados) {
 const app = createApp({
   setup() {
     // -----------------------------------------------------------------
-    // Formato esperado de dados-colecoes.json (arquivo na raiz):
+    // Formato esperado de colecoes.json (arquivo na raiz):
     // {
     //   "colecoes": [
-    //     { "nome": "item 1", "fundo": 3,  "traco": 5,   "eixos": [...] },
-    //     { "nome": "item 2", "fundo": 12, "traco": 45,  "eixos": [...] },
+    //     { "nome": "item 1", "imagens": 3,  "periodo": 5,  "tags": 4,  "interpretacoes": [...] },
+    //     { "nome": "item 2", "imagens": 12, "periodo": 45, "tags": 15, "interpretacoes": [...] },
     //     ...
     //   ]
     // }
@@ -206,8 +222,8 @@ const app = createApp({
     async function carregar() {
       erro.value = '';
       try {
-        const resposta = await fetch('dados-colecoes.json', { cache: 'no-store' });
-        if (!resposta.ok) throw new Error(`não foi possível ler dados-colecoes.json (HTTP ${resposta.status})`);
+        const resposta = await fetch('colecoes.json', { cache: 'no-store' });
+        if (!resposta.ok) throw new Error(`não foi possível ler colecoes.json (HTTP ${resposta.status})`);
         const json = await resposta.json();
 
         if (!Array.isArray(json.colecoes)) {
@@ -218,7 +234,7 @@ const app = createApp({
         await nextTick(); // garante que todos os <canvas> já estão no DOM
         await desenharTodas();
       } catch (e) {
-        erro.value = 'Erro ao carregar dados-colecoes.json: ' + e.message;
+        erro.value = 'Erro ao carregar colecoes.json: ' + e.message;
         colecoes.value = [];
       }
     }
